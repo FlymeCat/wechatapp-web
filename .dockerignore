@@ -1,0 +1,23 @@
+# VCS / IDE
+.git
+.idea
+.vscode
+
+# Build artifacts & local tooling
+bin
+.tools
+.gocache
+.gomodcache
+
+# Test fixtures not needed in the image
+testdata
+scripts
+
+# Docs/Readme
+README.md
+*.md
+
+# Environment / secrets
+.env
+.env.*
+!.env.example

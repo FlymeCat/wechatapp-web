@@ -1,0 +1,23 @@
+# Build artifacts
+bin/
+*.exe
+
+# Local Go caches (sandbox workaround; not part of the project)
+.gocache/
+.gomodcache/
+
+# Local tooling (swag CLI, etc.)
+.tools/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Test outputs
+testdata/out_*.png
+
+# OS / editor
+.DS_Store
+*.swp
+testdata
