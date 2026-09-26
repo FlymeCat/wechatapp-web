@@ -31,9 +31,9 @@ var ErrDuplicateUsername = errors.New("username already exists")
 var ErrDuplicateEmail = errors.New("email already exists")
 
 // User is a stored account. PasswordHash and MFA secrets are never serialized
-// to JSON.
+// to JSON. ID is an auto-incrementing 64-bit integer.
 type User struct {
-	ID           string `json:"id"`
+	ID           int64  `json:"id"`
 	Username     string `json:"username"`
 	Email        string `json:"email"`
 	PasswordHash string `json:"-"`
@@ -50,7 +50,7 @@ func (u *User) MFAEnabled() bool { return u.MFASecret != "" }
 
 // SafeUser is the user object exposed to API responses, with no secrets.
 type SafeUser struct {
-	ID         string    `json:"id"`
+	ID         int64     `json:"id"`
 	Username   string    `json:"username"`
 	Email      string    `json:"email"`
 	Nickname   string    `json:"nickname"`
@@ -84,21 +84,25 @@ func (u *User) CheckPassword(plain string) bool {
 // can be swapped for a database-backed one later.
 type Store interface {
 	Create(u *User) error
-	GetByID(id string) (*User, error)
+	GetByID(id int64) (*User, error)
 	GetByUsername(username string) (*User, error)
 	GetByEmail(email string) (*User, error)
 	List() ([]*User, error)
 	Update(u *User) error
-	Delete(id string) error
+	Delete(id int64) error
+	// CountByRole counts users currently holding the given role key (used by
+	// the role-management module to block deleting roles in use).
+	CountByRole(roleKey string) (int, error)
 }
 
 // MemoryStore keeps users in memory, optionally persisting to a JSON file on
 // every mutation when File is non-empty.
 type MemoryStore struct {
 	mu      sync.RWMutex
-	users   map[string]*User  // by id
-	byName  map[string]string // username -> id
-	byEmail map[string]string // normalized email -> id
+	nextID  int64
+	users   map[int64]*User  // by id
+	byName  map[string]int64 // username -> id
+	byEmail map[string]int64 // normalized email -> id
 	file    string
 }
 
@@ -106,9 +110,10 @@ type MemoryStore struct {
 // store loads existing users from it and persists every mutation to it.
 func NewMemoryStore(file string) *MemoryStore {
 	s := &MemoryStore{
-		users:   make(map[string]*User),
-		byName:  make(map[string]string),
-		byEmail: make(map[string]string),
+		nextID:  1,
+		users:   make(map[int64]*User),
+		byName:  make(map[string]int64),
+		byEmail: make(map[string]int64),
 		file:    file,
 	}
 	if file != "" {
@@ -122,8 +127,8 @@ func normalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-// Create stores a new user. The ID and CreatedAt/UpdatedAt must be set by the
-// caller.
+// Create stores a new user. The store assigns the auto-incrementing ID and
+// timestamps; the caller sets the remaining fields.
 func (s *MemoryStore) Create(u *User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,6 +147,8 @@ func (s *MemoryStore) Create(u *User) error {
 	}
 	u.UpdatedAt = now
 	u.Email = email
+	u.ID = s.nextID
+	s.nextID++
 	cp := *u
 	s.users[u.ID] = &cp
 	s.byName[u.Username] = u.ID
@@ -152,7 +159,7 @@ func (s *MemoryStore) Create(u *User) error {
 }
 
 // GetByID returns a copy of the user with the given ID.
-func (s *MemoryStore) GetByID(id string) (*User, error) {
+func (s *MemoryStore) GetByID(id int64) (*User, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	u, ok := s.users[id]
@@ -208,6 +215,19 @@ func (s *MemoryStore) List() ([]*User, error) {
 	return out, nil
 }
 
+// CountByRole counts users holding the given role key.
+func (s *MemoryStore) CountByRole(roleKey string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, u := range s.users {
+		if u.Role == roleKey {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // Update replaces the stored user. The Username must not change (it is the
 // identity key); change it via create/delete instead.
 func (s *MemoryStore) Update(u *User) error {
@@ -240,7 +260,7 @@ func (s *MemoryStore) Update(u *User) error {
 }
 
 // Delete removes the user with the given ID.
-func (s *MemoryStore) Delete(id string) error {
+func (s *MemoryStore) Delete(id int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u, ok := s.users[id]
@@ -266,7 +286,8 @@ func (s *MemoryStore) save() error {
 }
 
 // load reads users from file when configured. Ignored on failure so a missing
-// file simply starts empty.
+// file simply starts empty. The next-ID counter is resumed past the highest
+// stored ID so new rows never collide with persisted ones.
 func (s *MemoryStore) load() error {
 	users, err := readJSONFile(s.file)
 	if err != nil {
@@ -278,6 +299,9 @@ func (s *MemoryStore) load() error {
 		s.byName[u.Username] = u.ID
 		if u.Email != "" {
 			s.byEmail[u.Email] = u.ID
+		}
+		if u.ID >= s.nextID {
+			s.nextID = u.ID + 1
 		}
 	}
 	return nil

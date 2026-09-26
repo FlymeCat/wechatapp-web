@@ -12,11 +12,34 @@ import (
 func newTestUser(username, role string) *User {
 	hash, _ := bcrypt.GenerateFromPassword([]byte("secret123"), bcrypt.MinCost)
 	return &User{
-		ID:           NewID(),
 		Username:     username,
 		PasswordHash: string(hash),
 		Nickname:     username,
 		Role:         role,
+	}
+}
+
+func TestMemoryStoreAutoIncrementID(t *testing.T) {
+	s := NewMemoryStore("")
+	seen := map[int64]bool{}
+	for _, name := range []string{"a", "b", "c"} {
+		u := newTestUser(name, RoleUser)
+		if err := s.Create(u); err != nil {
+			t.Fatal(err)
+		}
+		if u.ID <= 0 {
+			t.Fatalf("Create did not assign a positive ID: %d", u.ID)
+		}
+		if seen[u.ID] {
+			t.Fatalf("duplicate ID assigned: %d", u.ID)
+		}
+		seen[u.ID] = true
+	}
+	// IDs must be sequential starting at 1.
+	for i := int64(1); i <= 3; i++ {
+		if !seen[i] {
+			t.Errorf("expected ID %d to be assigned", i)
+		}
 	}
 }
 
@@ -102,4 +125,28 @@ func TestMemoryStorePersistence(t *testing.T) {
 	}
 
 	_ = os.Remove(path)
+}
+
+func TestMemoryStorePersistenceResumesIDCounter(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "users.json")
+
+	s := NewMemoryStore(path)
+	first := newTestUser("first", RoleUser)
+	if err := s.Create(first); err != nil {
+		t.Fatal(err)
+	}
+
+	// A fresh store must not reissue an ID that already exists on disk.
+	s2 := NewMemoryStore(path)
+	second := newTestUser("second", RoleUser)
+	if err := s2.Create(second); err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("reloaded store reused ID %d", first.ID)
+	}
+	if second.ID <= first.ID {
+		t.Errorf("new ID %d should exceed existing %d", second.ID, first.ID)
+	}
 }

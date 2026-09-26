@@ -357,14 +357,17 @@ func (h *AuthHandler) MFAResetConfirm(c *gin.Context) {
 //	@Tags         users
 //	@Security     BearerAuth
 //	@Produce      json
-//	@Param        id path string true "User ID"
+//	@Param        id path int true "User ID"
 //	@Success      200 {object} map[string]any "message: 已重置该用户的两步验证"
 //	@Failure      401 {object} ErrorResponse "Not authenticated"
 //	@Failure      403 {object} ErrorResponse "Not an admin"
 //	@Failure      404 {object} ErrorResponse "User not found"
 //	@Router       /users/{id}/mfa [delete]
 func (h *UserHandler) MFAResetByAdmin(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseIDParam(c)
+	if !ok {
+		return
+	}
 	u, err := h.users.GetByID(id)
 	if err != nil {
 		writeError(c, http.StatusNotFound, "用户不存在")

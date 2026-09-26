@@ -48,7 +48,7 @@ build:
 
 ## run: start the server locally (requires REMOVE_BG_API_KEY)
 run:
-	$(GOENV) go run $(CMD_DIR)
+	@bash -c 'set -a; [ -f .env ] && source .env; set +a; export $(GOENV); go run $(CMD_DIR)'
 
 ## test: run all unit tests
 test:

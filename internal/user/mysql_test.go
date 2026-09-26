@@ -145,9 +145,11 @@ CREATE TABLE users (
 	}
 
 	u := newTestUser("legacy", RoleAdmin)
+	// A legacy row used a 32-char hex string ID and had no email column.
+	const legacyID = "0123456789abcdef0123456789abcdef"
 	if _, err := s.DB().Exec(
 		"INSERT INTO users (id, username, password_hash, nickname, role, mfa_secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NULL, NOW(3), NOW(3))",
-		u.ID, u.Username, u.PasswordHash, u.Nickname, u.Role,
+		legacyID, u.Username, u.PasswordHash, u.Nickname, u.Role,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +163,10 @@ CREATE TABLE users (
 	if err != nil {
 		t.Fatalf("GetByUsername on legacy row: %v", err)
 	}
+	// The CHAR(32) ID must have been replaced by a positive auto-increment ID.
+	if got.ID <= 0 {
+		t.Errorf("migrated ID = %d, want a positive auto-increment value", got.ID)
+	}
 	if got.MFASecret != "" || got.Email != "" {
 		t.Errorf("legacy MFA/email fields = %q/%q, want empty", got.MFASecret, got.Email)
 	}
@@ -171,12 +177,15 @@ CREATE TABLE users (
 		t.Error("legacy row must not report MFA enabled")
 	}
 
-	// Even with NULLs restored, reads stay safe thanks to COALESCE.
-	if _, err := s.DB().Exec("UPDATE users SET mfa_secret = NULL"); err != nil {
+	// The migrated schema makes mfa_secret NOT NULL, so the row can no longer
+	// hold NULL there; email stays nullable and must still read back safely.
+	if _, err := s.DB().Exec("UPDATE users SET email = NULL"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.GetByUsername("legacy"); err != nil {
-		t.Fatalf("GetByUsername with NULL columns: %v", err)
+	if got, err := s.GetByUsername("legacy"); err != nil {
+		t.Fatalf("GetByUsername with NULL email: %v", err)
+	} else if got.Email != "" {
+		t.Errorf("NULL email should read as empty, got %q", got.Email)
 	}
 	if _, err := s.List(); err != nil {
 		t.Fatalf("List with NULL columns: %v", err)

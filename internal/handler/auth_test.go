@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"wechatapp-web/internal/auth"
+	"wechatapp-web/internal/role"
 	"wechatapp-web/internal/user"
 )
 
@@ -74,18 +76,24 @@ func (m *captureMailer) lastCode() string {
 func newAuthTestRouter(t *testing.T, secret string) (*gin.Engine, user.Store, *captureMailer) {
 	t.Helper()
 	users := user.NewMemoryStore("")
+	roles := role.NewMemoryStore("")
 
 	// Seed admin like router.seedAdmin does.
 	hash, _ := auth.HashPassword("admin123")
 	_ = users.Create(&user.User{
-		ID: user.NewID(), Username: "admin", PasswordHash: hash,
+		Username: "admin", PasswordHash: hash,
 		Nickname: "管理员", Role: user.RoleAdmin,
 	})
+	// Seed built-in roles like router.seedBuiltinRoles does.
+	for _, b := range role.BuiltinRoles() {
+		_ = roles.Create(b)
+	}
 
 	jwtMgr := auth.NewManager(secret, time.Hour, "wechatapp-web")
 	mailer := &captureMailer{}
 	authH := NewAuthHandler(users, jwtMgr, "wechatapp-web", mailer, auth.NewEmailOTPManager())
-	userH := NewUserHandler(users)
+	userH := NewUserHandler(users, roles)
+	roleH := NewRoleHandler(roles, users)
 
 	r := gin.New()
 	v1 := r.Group("/api/v1")
@@ -111,6 +119,11 @@ func newAuthTestRouter(t *testing.T, secret string) (*gin.Engine, user.Store, *c
 			admin.POST("/users", userH.Create)
 			admin.DELETE("/users/:id", userH.Delete)
 			admin.DELETE("/users/:id/mfa", userH.MFAResetByAdmin)
+			admin.GET("/roles", roleH.List)
+			admin.POST("/roles", roleH.Create)
+			admin.GET("/roles/:id", roleH.Get)
+			admin.PUT("/roles/:id", roleH.Update)
+			admin.DELETE("/roles/:id", roleH.Delete)
 		}
 		detail := v1.Group("", jwtMgr.RequireAuth())
 		{
@@ -221,7 +234,7 @@ func TestRegisterLoginMe(t *testing.T) {
 	var me user.SafeUser
 	json.Unmarshal(rec.Body.Bytes(), &me)
 	if me.Username != "zhangsan" || me.ID != created.ID {
-		t.Errorf("me = %+v, want id %s", me, created.ID)
+		t.Errorf("me = %+v, want id %d", me, created.ID)
 	}
 
 	// /auth/me without token -> 401.
@@ -310,7 +323,7 @@ func TestUserManagementAdminFlow(t *testing.T) {
 	}
 
 	// User can view self.
-	if rec := getAuth(t, r, "/api/v1/users/"+created.ID, userToken); rec.Code != http.StatusOK {
+	if rec := getAuth(t, r, "/api/v1/users/"+idStr(created.ID), userToken); rec.Code != http.StatusOK {
 		t.Errorf("self view status = %d, want 200", rec.Code)
 	}
 
@@ -321,13 +334,13 @@ func TestUserManagementAdminFlow(t *testing.T) {
 	}
 
 	// User cannot delete anyone -> 403.
-	rec = withToken(t, r, http.MethodDelete, "/api/v1/users/"+created.ID, userToken, nil)
+	rec = withToken(t, r, http.MethodDelete, "/api/v1/users/"+idStr(created.ID), userToken, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("delete as user status = %d, want 403", rec.Code)
 	}
 
 	// Admin deletes the user -> 200.
-	rec = withToken(t, r, http.MethodDelete, "/api/v1/users/"+created.ID, adminToken, nil)
+	rec = withToken(t, r, http.MethodDelete, "/api/v1/users/"+idStr(created.ID), adminToken, nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("delete as admin status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -351,7 +364,7 @@ func TestUpdateUserSelfAndAdmin(t *testing.T) {
 
 	// Self can change nickname.
 	nick := "李四改"
-	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+created.ID, userToken, UpdateUserRequest{Nickname: &nick})
+	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+idStr(created.ID), userToken, UpdateUserRequest{Nickname: &nick})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("self update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -363,13 +376,13 @@ func TestUpdateUserSelfAndAdmin(t *testing.T) {
 
 	// User cannot promote self to admin -> 403.
 	role := user.RoleAdmin
-	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+created.ID, userToken, UpdateUserRequest{Role: &role})
+	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+idStr(created.ID), userToken, UpdateUserRequest{Role: &role})
 	if rec.Code != http.StatusForbidden {
 		t.Errorf("self role change status = %d, want 403", rec.Code)
 	}
 
 	// Admin can change role.
-	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+created.ID, adminToken, UpdateUserRequest{Role: &role})
+	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+idStr(created.ID), adminToken, UpdateUserRequest{Role: &role})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("admin role change status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -380,7 +393,7 @@ func TestUpdateUserSelfAndAdmin(t *testing.T) {
 
 	// Self can set their email (needed for MFA email reset).
 	email := "lisi@example.com"
-	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+created.ID, userToken, UpdateUserRequest{Email: &email})
+	rec = withToken(t, r, http.MethodPut, "/api/v1/users/"+idStr(created.ID), userToken, UpdateUserRequest{Email: &email})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("self email update status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -390,7 +403,7 @@ func TestUpdateUserSelfAndAdmin(t *testing.T) {
 	}
 	// Invalid email -> 400.
 	bad := "not-an-email"
-	if rec := withToken(t, r, http.MethodPut, "/api/v1/users/"+created.ID, userToken, UpdateUserRequest{Email: &bad}); rec.Code != http.StatusBadRequest {
+	if rec := withToken(t, r, http.MethodPut, "/api/v1/users/"+idStr(created.ID), userToken, UpdateUserRequest{Email: &bad}); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad email status = %d, want 400", rec.Code)
 	}
 	// The account is now findable by email (used by the MFA reset flow).
@@ -800,5 +813,8 @@ func getSelfID(t *testing.T, r *gin.Engine, token string) string {
 	rec := getAuth(t, r, "/api/v1/auth/me", token)
 	var me user.SafeUser
 	json.Unmarshal(rec.Body.Bytes(), &me)
-	return me.ID
+	return idStr(me.ID)
 }
+
+// idStr renders a numeric ID for use in URL paths.
+func idStr(id int64) string { return strconv.FormatInt(id, 10) }

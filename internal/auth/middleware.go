@@ -23,12 +23,12 @@ func ClaimsFromContext(c *gin.Context) (*Claims, bool) {
 	return cl, ok
 }
 
-// UserIDFromContext returns the authenticated user ID, or "" if absent.
-func UserIDFromContext(c *gin.Context) string {
+// UserIDFromContext returns the authenticated user ID, or 0 if absent.
+func UserIDFromContext(c *gin.Context) int64 {
 	if cl, ok := ClaimsFromContext(c); ok {
 		return cl.UserID
 	}
-	return ""
+	return 0
 }
 
 // RequireAuth validates the "Authorization: Bearer <token>" header and stores

@@ -885,6 +885,287 @@ const docTemplate = `{
                 }
             }
         },
+        "/roles": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns every role, built-in ones first. Admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "roles"
+                ],
+                "summary": "List all roles (admin)",
+                "responses": {
+                    "200": {
+                        "description": "Role list",
+                        "schema": {
+                            "$ref": "#/definitions/handler.RoleListResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Adds a new role that can be assigned to users. Built-in keys\n\"admin\" and \"user\" cannot be reused. Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "roles"
+                ],
+                "summary": "Create a role (admin)",
+                "parameters": [
+                    {
+                        "description": "New role",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.CreateRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created role",
+                        "schema": {
+                            "$ref": "#/definitions/role.Role"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid input or reserved key",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Role key already exists",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/roles/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns one role by ID. Admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "roles"
+                ],
+                "summary": "Get role detail (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Role ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Role detail",
+                        "schema": {
+                            "$ref": "#/definitions/role.Role"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Role not found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Changes the display name and/or description. The key is\nimmutable (it is the identity used by user records and\nauthorization). Admin only.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "roles"
+                ],
+                "summary": "Update a role (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Role ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to update",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handler.UpdateRoleRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Updated role",
+                        "schema": {
+                            "$ref": "#/definitions/role.Role"
+                        }
+                    },
+                    "400": {
+                        "description": "Invalid input",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Role not found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Removes a custom role. Built-in roles (admin/user) cannot be\ndeleted, and a role still assigned to users cannot be deleted\nuntil those users are moved to another role. Admin only.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "roles"
+                ],
+                "summary": "Delete a role (admin)",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Role ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "message: 角色已删除",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Built-in role",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Not authenticated",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Not an admin",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Role not found",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Role still assigned to users",
+                        "schema": {
+                            "$ref": "#/definitions/handler.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/users": {
             "get": {
                 "security": [
@@ -1000,7 +1281,7 @@ const docTemplate = `{
                 "summary": "Get user detail",
                 "parameters": [
                     {
-                        "type": "string",
+                        "type": "integer",
                         "description": "User ID",
                         "name": "id",
                         "in": "path",
@@ -1053,7 +1334,7 @@ const docTemplate = `{
                 "summary": "Update a user",
                 "parameters": [
                     {
-                        "type": "string",
+                        "type": "integer",
                         "description": "User ID",
                         "name": "id",
                         "in": "path",
@@ -1118,7 +1399,7 @@ const docTemplate = `{
                 "summary": "Delete a user (admin)",
                 "parameters": [
                     {
-                        "type": "string",
+                        "type": "integer",
                         "description": "User ID",
                         "name": "id",
                         "in": "path",
@@ -1171,7 +1452,7 @@ const docTemplate = `{
                 "summary": "Reset a user's MFA (admin)",
                 "parameters": [
                     {
-                        "type": "string",
+                        "type": "integer",
                         "description": "User ID",
                         "name": "id",
                         "in": "path",
@@ -1258,6 +1539,30 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.CreateRoleRequest": {
+            "type": "object",
+            "required": [
+                "key",
+                "name"
+            ],
+            "properties": {
+                "description": {
+                    "description": "描述（可选）",
+                    "type": "string",
+                    "example": "可以查看报表"
+                },
+                "key": {
+                    "description": "角色唯一标识（2-32位字母/数字/下划线/连字符）",
+                    "type": "string",
+                    "example": "manager"
+                },
+                "name": {
+                    "description": "显示名称",
+                    "type": "string",
+                    "example": "经理"
+                }
+            }
+        },
         "handler.CreateUserRequest": {
             "type": "object",
             "required": [
@@ -1281,12 +1586,8 @@ const docTemplate = `{
                     "example": "secret123"
                 },
                 "role": {
-                    "description": "角色：user | admin（默认 user）",
+                    "description": "角色标识（默认 user，须已存在）",
                     "type": "string",
-                    "enum": [
-                        "user",
-                        "admin"
-                    ],
                     "example": "user"
                 },
                 "username": {
@@ -1534,6 +1835,20 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.RoleListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/role.Role"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
         "handler.ScanResponse": {
             "type": "object",
             "properties": {
@@ -1572,6 +1887,21 @@ const docTemplate = `{
                 }
             }
         },
+        "handler.UpdateRoleRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "description": "描述（可选）",
+                    "type": "string",
+                    "example": "可以查看报表"
+                },
+                "name": {
+                    "description": "显示名称（可选）",
+                    "type": "string",
+                    "example": "经理"
+                }
+            }
+        },
         "handler.UpdateUserRequest": {
             "type": "object",
             "properties": {
@@ -1586,13 +1916,9 @@ const docTemplate = `{
                     "example": "张三"
                 },
                 "role": {
-                    "description": "角色（仅管理员可改）",
+                    "description": "角色标识（仅管理员可改，须已存在）",
                     "type": "string",
-                    "enum": [
-                        "user",
-                        "admin"
-                    ],
-                    "example": "user"
+                    "example": "manager"
                 }
             }
         },
@@ -1847,6 +2173,36 @@ const docTemplate = `{
                 }
             }
         },
+        "role.Role": {
+            "type": "object",
+            "properties": {
+                "builtin": {
+                    "description": "内置角色不可删除、key 不可改",
+                    "type": "boolean"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "description": {
+                    "description": "描述",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "description": "唯一标识，如 admin / user / manager",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "显示名称",
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
         "user.SafeUser": {
             "type": "object",
             "properties": {
@@ -1857,7 +2213,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "id": {
-                    "type": "string"
+                    "type": "integer"
                 },
                 "mfa_enabled": {
                     "description": "是否已开启两步验证",

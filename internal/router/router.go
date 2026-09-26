@@ -3,6 +3,8 @@ package router
 import (
 	"log"
 	"net/http"
+	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -12,6 +14,7 @@ import (
 	"wechatapp-web/internal/config"
 	"wechatapp-web/internal/handler"
 	"wechatapp-web/internal/mail"
+	"wechatapp-web/internal/role"
 	"wechatapp-web/internal/user"
 )
 
@@ -29,6 +32,8 @@ func New(cfg *config.Config) *gin.Engine {
 	// it must NOT be closed here (router.New returns before the server runs).
 	users := newUserStore(cfg)
 	seedAdmin(users, cfg)
+	roles := newRoleStore(cfg, users)
+	seedBuiltinRoles(roles, users)
 	jwtManager := auth.NewManager(cfg.JWTSecret, cfg.JWTTTL, cfg.JWTIssuer)
 
 	mailer := mail.NewSender(mail.Config{
@@ -42,7 +47,8 @@ func New(cfg *config.Config) *gin.Engine {
 	emailOTP := auth.NewEmailOTPManager()
 
 	authH := handler.NewAuthHandler(users, jwtManager, cfg.MFAIssuer, mailer, emailOTP)
-	userH := handler.NewUserHandler(users)
+	userH := handler.NewUserHandler(users, roles)
+	roleH := handler.NewRoleHandler(roles, users)
 
 	// API v1 routes.
 	bg := handler.NewBackgroundHandler(cfg)
@@ -76,6 +82,12 @@ func New(cfg *config.Config) *gin.Engine {
 			admin.POST("/users", userH.Create)
 			admin.DELETE("/users/:id", userH.Delete)
 			admin.DELETE("/users/:id/mfa", userH.MFAResetByAdmin)
+			// Role management (admin).
+			admin.GET("/roles", roleH.List)
+			admin.POST("/roles", roleH.Create)
+			admin.GET("/roles/:id", roleH.Get)
+			admin.PUT("/roles/:id", roleH.Update)
+			admin.DELETE("/roles/:id", roleH.Delete)
 		}
 		// User detail: admin or self (checked in handler).
 		userDetail := v1.Group("", jwtManager.RequireAuth())
@@ -138,7 +150,6 @@ func seedAdmin(users user.Store, cfg *config.Config) {
 		return
 	}
 	u := &user.User{
-		ID:           user.NewID(),
 		Username:     cfg.AdminUsername,
 		PasswordHash: hash,
 		Nickname:     "管理员",
@@ -149,4 +160,59 @@ func seedAdmin(users user.Store, cfg *config.Config) {
 		return
 	}
 	log.Printf("seeded admin user %q (change the default password after first login)", cfg.AdminUsername)
+}
+
+// newRoleStore picks the role storage backend the same way newUserStore picks
+// the user backend: MySQL when DB_HOST is configured, otherwise in-memory
+// (optionally persisted to a JSON file).
+func newRoleStore(cfg *config.Config, users user.Store) role.Store {
+	if cfg.DBHost != "" {
+		rc := role.MySQLConfig{
+			Host:     cfg.DBHost,
+			Port:     cfg.DBPort,
+			User:     cfg.DBUser,
+			Password: cfg.DBPassword,
+			DBName:   cfg.DBName,
+			Charset:  cfg.DBCharset,
+		}
+		store, err := role.OpenMySQL(rc)
+		if err != nil {
+			log.Fatalf("failed to connect to MySQL (roles): %v", err)
+		}
+		log.Printf("role store: MySQL (%s:%s/%s)", rc.Host, rc.Port, rc.DBName)
+		return store
+	}
+	store := role.NewMemoryStore(rolesFileFor(cfg))
+	if cfg.UsersFile != "" {
+		log.Printf("role store: in-memory with JSON persistence (%s)", rolesFileFor(cfg))
+	}
+	return store
+}
+
+// rolesFileFor derives the roles persistence file from the users file path so
+// both stores share one directory (e.g. data/users.json -> data/roles.json).
+func rolesFileFor(cfg *config.Config) string {
+	if cfg.UsersFile == "" {
+		return ""
+	}
+	dir := filepath.Dir(cfg.UsersFile)
+	base := filepath.Base(cfg.UsersFile)
+	return filepath.Join(dir, strings.Replace(base, "users", "roles", 1))
+}
+
+// seedBuiltinRoles guarantees the admin/user roles exist. The keys are
+// authorization anchors (RequireRole("admin") etc.), so this runs on every
+// startup and is idempotent.
+func seedBuiltinRoles(roles role.Store, users user.Store) {
+	builtins := role.BuiltinRoles()
+	for _, b := range builtins {
+		if _, err := roles.GetByKey(b.Key); err == nil {
+			continue
+		}
+		if err := roles.Create(b); err != nil {
+			log.Printf("[warn] failed to seed builtin role %q: %v", b.Key, err)
+			continue
+		}
+		log.Printf("seeded builtin role %q", b.Key)
+	}
 }

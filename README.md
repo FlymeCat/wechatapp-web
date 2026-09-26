@@ -36,13 +36,15 @@ make build && ./bin/wechatapp-server
 
 服务内置账号体系：注册 / 登录签发 JWT，登出使 token 失效；支持信息查看与管理员人员管理。启动时自动播种初始管理员（`ADMIN_USERNAME` / `ADMIN_PASSWORD`，默认 `admin` / `admin123`，**部署前务必修改**）。
 
+> **ID 类型**：用户与角色 ID 统一为 **自增 `BIGINT`**（MySQL `BIGINT UNSIGNED AUTO_INCREMENT`；内存存储同样自增），接口返回数字（如 `"id": 1`），路径参数为数字（`/api/v1/users/1`）。从旧版字符串 ID 升级时，服务启动会自动迁移：旧 `CHAR(32)` 表按创建顺序重建为新表，数据保留并重新分配序号 ID。
+
 **鉴权方式**：登录接口返回的 `token` 放在请求头
 
 ```
 Authorization: Bearer <token>
 ```
 
-**角色**：`admin`（可管理所有用户）/ `user`（仅可查看、修改自己）。
+**角色**：`admin`（可管理所有用户）/ `user`（仅可查看、修改自己）为内置角色；管理员可额外创建自定义角色并分配给用户（见[角色管理](#角色管理接口管理员)）。权限判定基于角色标识：内置 `admin` 为超级管理员，自定义角色由各接口用 `RequireRole("角色标识")` 组合控制。
 
 ### 认证接口（公开部分）
 
@@ -156,6 +158,7 @@ curl -X POST http://localhost:8080/api/v1/auth/mfa/reset/confirm \
 | `GET`    | `/api/v1/users/:id` | 查看指定用户（admin 或本人） |
 | `PUT`    | `/api/v1/users/:id` | 修改昵称（本人/admin）、角色（仅 admin） |
 | `DELETE` | `/api/v1/users/:id` | 删除用户 |
+| `DELETE` | `/api/v1/users/:id/mfa` | 管理员重置某用户的两步验证 |
 
 **权限规则**：
 
@@ -169,7 +172,34 @@ curl -X POST http://localhost:8080/api/v1/auth/mfa/reset/confirm \
 
 > `*` 最后一个管理员不可注销（防止系统失去管理员）。
 
-> **存储后端**：默认内存存储；设置 `USERS_FILE=data/users.json` 可跨重启持久化（含密码哈希）；设置 `DB_HOST` 后改用 **MySQL**（推荐，启动时自动建库建表）。
+> **存储后端**：默认内存存储；设置 `USERS_FILE=data/users.json` 可跨重启持久化（含密码哈希）；设置 `DB_HOST` 后改用 **MySQL**（推荐，启动时自动建库建表）。角色数据与用户走同一后端（MySQL 存 `roles` 表；内存模式衍生 `data/roles.json`）。旧版 `CHAR(32)` 字符串 ID 表会在启动时自动迁移为 `BIGINT AUTO_INCREMENT`（数据保留、重新分配序号 ID）。
+
+### 角色管理接口（管理员）
+
+角色是动态实体（管理员可增删改查），用于给用户分组。**内置角色** `admin` / `user` 在启动时自动播种：可修改显示名/描述，但**不可删除、key 不可改**（权限判定依赖这两个 key）。
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| `GET`    | `/api/v1/roles` | 角色列表 `{total, items[]}`（内置在前） |
+| `POST`   | `/api/v1/roles` | 创建角色 `{key, name, description?}` |
+| `GET`    | `/api/v1/roles/:id` | 角色详情 |
+| `PUT`    | `/api/v1/roles/:id` | 修改 `{name?, description?}`（key 不可改） |
+| `DELETE` | `/api/v1/roles/:id` | 删除角色 |
+
+**规则**：
+- `key`：2-32 位字母/数字/下划线/连字符，全局唯一，不可修改；`admin` / `user` 为保留 key。
+- 删除约束：内置角色返回 `400`；仍被用户使用的角色返回 `409`（需先把相关用户调整到其他角色）。
+- 创建/修改用户角色时，服务端会校验角色必须存在；`admin` 之外的角色（含自定义角色）不拥有管理权限，仅作为分组标签由各接口按需鉴权。
+- 创建角色示例：
+  ```bash
+  curl -X POST http://localhost:8080/api/v1/roles \
+    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+    -d '{"key":"manager","name":"经理","description":"可以查看报表"}'
+  # 分配角色
+  curl -X PUT http://localhost:8080/api/v1/users/<user_id> \
+    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+    -d '{"role":"manager"}'
+  ```
 
 ## 接口
 
@@ -447,12 +477,18 @@ wechatapp-web/
 │   │   ├── jwt_test.go
 │   │   └── totp_test.go
 │   ├── user/
-│   │   ├── user.go                # 用户模型 + 内存存储（Store 接口）
-│   │   ├── mysql.go               # MySQL 存储（建库建表、增删改查）
+│   │   ├── user.go                # 用户模型 + 内存存储（Store 接口，自增 bigint ID）
+│   │   ├── mysql.go               # MySQL 存储（建库建表、增删改查、ID 迁移）
 │   │   ├── persist.go             # JSON 文件持久化（可选）
-│   │   ├── id.go                  # 用户 ID 生成
 │   │   ├── user_test.go
 │   │   └── mysql_test.go          # MySQL 集成测试（无库时自动跳过）
+│   ├── role/
+│   │   ├── role.go                # 角色模型 + 内存存储（Store 接口、内置角色、自增 bigint ID）
+│   │   ├── mysql.go               # 角色 MySQL 存储（建表、增删改查、播种内置角色、ID 迁移）
+│   │   ├── persist.go             # JSON 文件持久化（可选）
+│   │   └── role_test.go           # 单元 + MySQL 集成测试
+│   ├── mysqlutil/
+│   │   └── migrate.go             # 共用的 CHAR(32)→BIGINT ID 迁移逻辑（user/role 复用）
 │   ├── handler/
 │   │   ├── background.go          # 换背景 Gin handler（含 Swagger 接口注解）
 │   │   ├── lottery.go             # 大乐透 scan / verify Gin handler
@@ -460,8 +496,10 @@ wechatapp-web/
 │   │   ├── auth.go                # 注册/登录/登出/me/改密 handler
 │   │   ├── mfa.go                 # 两步验证 handler（setup/enable/verify/disable/邮箱重置/管理员重置）
 │   │   ├── user.go                # 人员管理 handler（管理员）
+│   │   ├── role.go                # 角色管理 handler（增删改查，管理员）
 │   │   ├── background_test.go
 │   │   ├── lottery_test.go
+│   │   ├── role_test.go
 │   │   └── auth_test.go
 │   ├── mail/
 │   │   ├── sender.go              # 邮件发送：console（开发）/ SMTP 两种实现
@@ -596,8 +634,10 @@ make test
 - `internal/auth/totp_test.go`：TOTP 校验（含时钟漂移窗口）、二维码生成测试。
 - `internal/auth/emailotp_test.go`：邮箱验证码生成/校验/过期/防爆破/重发冷却测试。
 - `internal/user/user_test.go`：用户存储增删改查与 JSON 文件持久化测试。
-- `internal/user/mysql_test.go`：MySQL 存储集成测试（设置 `TEST_DB_HOST` 等环境变量时运行，否则自动跳过；含遗留 NULL 列回归测试）。
+- `internal/user/mysql_test.go`：MySQL 存储集成测试（设置 `TEST_DB_HOST` 等环境变量时运行，否则自动跳过；含遗留 NULL 列与 CHAR(32)→BIGINT 迁移回归测试）。
+- `internal/role/role_test.go`：角色存储增删改查、自增 ID、内置角色保护、JSON 持久化、MySQL 集成测试（含 CHAR(32)→BIGINT 迁移）。
 - `internal/handler/auth_test.go`：注册/登录/登出/改密/人员管理/MFA 全流程的端到端 handler 测试（含角色权限校验）。
+- `internal/handler/role_test.go`：角色 CRUD 端到端 handler 测试（非管理员 403、内置角色保护、删除关联用户 409、自定义角色分配）。
 
 手动冒烟测试（可选，无需真实 API Key）：
 

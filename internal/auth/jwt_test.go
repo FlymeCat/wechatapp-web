@@ -10,7 +10,7 @@ import (
 
 func TestIssueAndParse(t *testing.T) {
 	m := NewManager("test-secret", time.Hour, "wechatapp-web")
-	token, exp, err := m.Issue("uid-1", "alice", "admin")
+	token, exp, err := m.Issue(1, "alice", "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,7 +22,7 @@ func TestIssueAndParse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
-	if claims.UserID != "uid-1" || claims.Username != "alice" || claims.Role != "admin" {
+	if claims.UserID != 1 || claims.Username != "alice" || claims.Role != "admin" {
 		t.Errorf("claims = %+v", claims)
 	}
 	if claims.ID == "" {
@@ -33,7 +33,7 @@ func TestIssueAndParse(t *testing.T) {
 func TestParseWrongSecret(t *testing.T) {
 	m1 := NewManager("secret-1", time.Hour, "wechatapp-web")
 	m2 := NewManager("secret-2", time.Hour, "wechatapp-web")
-	token, _, _ := m1.Issue("uid-1", "alice", "user")
+	token, _, _ := m1.Issue(1, "alice", "user")
 	if _, err := m2.Parse(token); !errors.Is(err, ErrInvalidToken) {
 		t.Errorf("err = %v, want ErrInvalidToken", err)
 	}
@@ -41,7 +41,7 @@ func TestParseWrongSecret(t *testing.T) {
 
 func TestParseTampered(t *testing.T) {
 	m := NewManager("test-secret", time.Hour, "wechatapp-web")
-	token, _, _ := m.Issue("uid-1", "alice", "user")
+	token, _, _ := m.Issue(1, "alice", "user")
 	if _, err := m.Parse(token + "x"); !errors.Is(err, ErrInvalidToken) {
 		t.Errorf("err = %v, want ErrInvalidToken", err)
 	}
@@ -51,7 +51,7 @@ func TestParseExpired(t *testing.T) {
 	m := NewManager("test-secret", time.Hour, "wechatapp-web")
 	// Build a token whose ExpiresAt is already in the past.
 	claims := Claims{
-		UserID:   "uid-1",
+		UserID:   1,
 		Username: "alice",
 		Role:     "user",
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -72,7 +72,7 @@ func TestParseExpired(t *testing.T) {
 
 func TestRevoke(t *testing.T) {
 	m := NewManager("test-secret", time.Hour, "wechatapp-web")
-	token, _, _ := m.Issue("uid-1", "alice", "user")
+	token, _, _ := m.Issue(1, "alice", "user")
 
 	claims, err := m.Parse(token)
 	if err != nil {
@@ -99,7 +99,7 @@ func TestBlacklistCleanup(t *testing.T) {
 
 func TestEmptySecretStillWorks(t *testing.T) {
 	m := NewManager("", time.Hour, "")
-	token, _, err := m.Issue("uid-1", "alice", "user")
+	token, _, err := m.Issue(1, "alice", "user")
 	if err != nil {
 		t.Fatal(err)
 	}

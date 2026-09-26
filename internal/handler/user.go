@@ -8,17 +8,19 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"wechatapp-web/internal/auth"
+	"wechatapp-web/internal/role"
 	"wechatapp-web/internal/user"
 )
 
 // UserHandler exposes the user-management endpoints (admin-managed).
 type UserHandler struct {
 	users user.Store
+	roles role.Store
 }
 
 // NewUserHandler creates a user-management handler.
-func NewUserHandler(users user.Store) *UserHandler {
-	return &UserHandler{users: users}
+func NewUserHandler(users user.Store, roles role.Store) *UserHandler {
+	return &UserHandler{users: users, roles: roles}
 }
 
 // CreateUserRequest is the body of POST /users (admin).
@@ -27,14 +29,14 @@ type CreateUserRequest struct {
 	Email    string `json:"email" example:"lisi@example.com"`                // 邮箱（推荐填写，用于两步验证重置）
 	Password string `json:"password" binding:"required" example:"secret123"` // 密码（至少6位）
 	Nickname string `json:"nickname" example:"李四"`                           // 昵称
-	Role     string `json:"role" example:"user" enums:"user,admin"`          // 角色：user | admin（默认 user）
+	Role     string `json:"role" example:"user"`                             // 角色标识（默认 user，须已存在）
 }
 
 // UpdateUserRequest is the body of PUT /users/:id.
 type UpdateUserRequest struct {
-	Email    *string `json:"email" example:"zhangsan@example.com"`   // 邮箱（可选，本人或管理员可改）
-	Nickname *string `json:"nickname" example:"张三"`                  // 昵称（可选）
-	Role     *string `json:"role" enums:"user,admin" example:"user"` // 角色（仅管理员可改）
+	Email    *string `json:"email" example:"zhangsan@example.com"` // 邮箱（可选，本人或管理员可改）
+	Nickname *string `json:"nickname" example:"张三"`                // 昵称（可选）
+	Role     *string `json:"role" example:"manager"`               // 角色标识（仅管理员可改，须已存在）
 }
 
 // UserListResponse is the body of GET /users.
@@ -78,14 +80,17 @@ func (h *UserHandler) List(c *gin.Context) {
 //	@Tags         users
 //	@Security     BearerAuth
 //	@Produce      json
-//	@Param        id path string true "User ID"
+//	@Param        id path int true "User ID"
 //	@Success      200 {object} user.SafeUser "User detail"
 //	@Failure      401 {object} ErrorResponse "Not authenticated"
 //	@Failure      403 {object} ErrorResponse "Not allowed to view this user"
 //	@Failure      404 {object} ErrorResponse "User not found"
 //	@Router       /users/{id} [get]
 func (h *UserHandler) Get(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseIDParam(c)
+	if !ok {
+		return
+	}
 	claims, _ := auth.ClaimsFromContext(c)
 	if !canManage(claims, id) {
 		writeError(c, http.StatusForbidden, "无权查看该用户")
@@ -136,8 +141,8 @@ func (h *UserHandler) Create(c *gin.Context) {
 	if role == "" {
 		role = user.RoleUser
 	}
-	if role != user.RoleUser && role != user.RoleAdmin {
-		writeError(c, http.StatusBadRequest, "角色只能是 user 或 admin")
+	if _, err := h.roles.GetByKey(role); err != nil {
+		writeError(c, http.StatusBadRequest, "角色不存在："+role)
 		return
 	}
 	email := strings.ToLower(strings.TrimSpace(req.Email))
@@ -149,7 +154,6 @@ func (h *UserHandler) Create(c *gin.Context) {
 	}
 
 	u := &user.User{
-		ID:           user.NewID(),
 		Username:     req.Username,
 		Email:        email,
 		PasswordHash: hash,
@@ -181,7 +185,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 //	@Security     BearerAuth
 //	@Accept       json
 //	@Produce      json
-//	@Param        id path string true "User ID"
+//	@Param        id path int true "User ID"
 //	@Param        request body UpdateUserRequest true "Fields to update"
 //	@Success      200 {object} user.SafeUser "Updated user"
 //	@Failure      400 {object} ErrorResponse "Invalid input"
@@ -190,7 +194,10 @@ func (h *UserHandler) Create(c *gin.Context) {
 //	@Failure      404 {object} ErrorResponse "User not found"
 //	@Router       /users/{id} [put]
 func (h *UserHandler) Update(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseIDParam(c)
+	if !ok {
+		return
+	}
 	claims, _ := auth.ClaimsFromContext(c)
 	if !canManage(claims, id) {
 		writeError(c, http.StatusForbidden, "无权修改该用户")
@@ -216,8 +223,8 @@ func (h *UserHandler) Update(c *gin.Context) {
 			return
 		}
 		r := strings.TrimSpace(*req.Role)
-		if r != user.RoleUser && r != user.RoleAdmin {
-			writeError(c, http.StatusBadRequest, "角色只能是 user 或 admin")
+		if _, err := h.roles.GetByKey(r); err != nil {
+			writeError(c, http.StatusBadRequest, "角色不存在："+r)
 			return
 		}
 		u.Role = r
@@ -256,14 +263,17 @@ func (h *UserHandler) Update(c *gin.Context) {
 //	@Tags         users
 //	@Security     BearerAuth
 //	@Produce      json
-//	@Param        id path string true "User ID"
+//	@Param        id path int true "User ID"
 //	@Success      200 {object} map[string]any "message: 用户已删除"
 //	@Failure      401 {object} ErrorResponse "Not authenticated"
 //	@Failure      403 {object} ErrorResponse "Not an admin"
 //	@Failure      404 {object} ErrorResponse "User not found"
 //	@Router       /users/{id} [delete]
 func (h *UserHandler) Delete(c *gin.Context) {
-	id := c.Param("id")
+	id, ok := parseIDParam(c)
+	if !ok {
+		return
+	}
 	if claims, _ := auth.ClaimsFromContext(c); claims == nil || claims.Role != user.RoleAdmin {
 		writeError(c, http.StatusForbidden, "仅管理员可以删除用户")
 		return
@@ -277,6 +287,6 @@ func (h *UserHandler) Delete(c *gin.Context) {
 
 // canManage reports whether the claims may view/edit the given user: admins
 // manage anyone, everyone manages themselves.
-func canManage(claims *auth.Claims, targetID string) bool {
+func canManage(claims *auth.Claims, targetID int64) bool {
 	return claims != nil && (claims.Role == user.RoleAdmin || claims.UserID == targetID)
 }

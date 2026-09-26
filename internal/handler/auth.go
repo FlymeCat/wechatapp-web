@@ -105,7 +105,6 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	}
 
 	u := &user.User{
-		ID:           user.NewID(),
 		Username:     req.Username,
 		Email:        strings.ToLower(strings.TrimSpace(req.Email)),
 		PasswordHash: hash,
@@ -329,7 +328,7 @@ func (h *AuthHandler) DeleteMe(c *gin.Context) {
 }
 
 // isLastAdmin reports whether u is the only admin in the store.
-func isLastAdmin(users user.Store, excludeID string) bool {
+func isLastAdmin(users user.Store, excludeID int64) bool {
 	list, err := users.List()
 	if err != nil {
 		return true // fail closed

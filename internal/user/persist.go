@@ -11,7 +11,7 @@ import (
 // deliberately excluded from User's JSON tags (API safety) but must survive
 // persistence.
 type persistedUser struct {
-	ID           string    `json:"id"`
+	ID           int64     `json:"id"`
 	Username     string    `json:"username"`
 	Email        string    `json:"email,omitempty"`
 	PasswordHash string    `json:"password_hash"`

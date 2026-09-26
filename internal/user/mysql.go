@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+
+	"wechatapp-web/internal/mysqlutil"
 )
 
 // MySQLStore is a Store backed by a MySQL database. It implements the Store
@@ -124,11 +126,21 @@ func NewMySQLStore(dsn string) (*MySQLStore, error) {
 }
 
 // migrate ensures the users table exists with all current columns. For tables
-// created by older versions it adds any missing columns (idempotent).
+// created by older versions it adds any missing columns (idempotent) and, when
+// the table predates the bigint ID change, rebuilds it so IDs become
+// auto-incrementing 64-bit integers.
 func (s *MySQLStore) migrate(ctx context.Context) error {
+	// Rebuild old CHAR(32)-ID tables into the new BIGINT AUTO_INCREMENT shape
+	// before creating/altering, so the CREATE below reflects the new schema.
+	// The returned rows are re-inserted after the table is recreated.
+	oldRows, err := mysqlutil.MigrateIDToBigInt(ctx, s.db, "users")
+	if err != nil {
+		return err
+	}
+
 	const ddl = `
 CREATE TABLE IF NOT EXISTS users (
-	id          CHAR(32)     NOT NULL,
+	id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 	username    VARCHAR(64)  NOT NULL,
 	email       VARCHAR(190) NULL,
 	password_hash VARCHAR(255) NOT NULL,
@@ -143,6 +155,10 @@ CREATE TABLE IF NOT EXISTS users (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 	if _, err := s.db.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("create users table: %w", err)
+	}
+	// Re-insert rows migrated from the old CHAR(32)-ID table.
+	if err := mysqlutil.ReinsertMigrated(ctx, s.db, "users", oldRows); err != nil {
+		return err
 	}
 	// Upgrade path for tables created before MFA/email support.
 	upgrades := []struct{ name, ddl string }{
@@ -169,8 +185,6 @@ CREATE TABLE IF NOT EXISTS users (
 	return nil
 }
 
-// isDuplicateColumn reports whether the error is MySQL error 1060
-// (duplicate column name), which the ALTER ignores safely.
 func isDuplicateColumn(err error) bool {
 	return mysqlErrNumber(err) == 1060
 }
@@ -216,7 +230,8 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 	return u, nil
 }
 
-// Create inserts a new user.
+// Create inserts a new user. The database assigns the auto-increment ID,
+// which is written back to u.ID.
 func (s *MySQLStore) Create(u *User) error {
 	now := time.Now()
 	if u.CreatedAt.IsZero() {
@@ -224,17 +239,24 @@ func (s *MySQLStore) Create(u *User) error {
 	}
 	u.UpdatedAt = now
 	u.Email = normalizeEmail(u.Email)
-	_, err := s.db.Exec(
-		"INSERT INTO users (id, username, email, password_hash, nickname, role, mfa_secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		u.ID, u.Username, nullableEmail(u.Email), u.PasswordHash, u.Nickname, u.Role, u.MFASecret, u.CreatedAt, u.UpdatedAt,
+	res, err := s.db.Exec(
+		"INSERT INTO users (username, email, password_hash, nickname, role, mfa_secret, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		u.Username, nullableEmail(u.Email), u.PasswordHash, u.Nickname, u.Role, u.MFASecret, u.CreatedAt, u.UpdatedAt,
 	)
 	switch {
 	case isDuplicate(err) && strings.Contains(mysqlErrMessage(err), "uk_email"):
 		return ErrDuplicateEmail
 	case isDuplicate(err):
 		return ErrDuplicateUsername
+	case err != nil:
+		return err
 	}
-	return err
+	id, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("read last insert id: %w", err)
+	}
+	u.ID = id
+	return nil
 }
 
 // nullableEmail returns NULL for an empty email so the unique index tolerates
@@ -247,7 +269,7 @@ func nullableEmail(email string) any {
 }
 
 // GetByID returns the user with the given ID.
-func (s *MySQLStore) GetByID(id string) (*User, error) {
+func (s *MySQLStore) GetByID(id int64) (*User, error) {
 	row := s.db.QueryRow("SELECT "+userColumns+" FROM users WHERE id = ?", id)
 	return scanUser(row)
 }
@@ -262,6 +284,16 @@ func (s *MySQLStore) GetByUsername(username string) (*User, error) {
 func (s *MySQLStore) GetByEmail(email string) (*User, error) {
 	row := s.db.QueryRow("SELECT "+userColumns+" FROM users WHERE LOWER(email) = ?", normalizeEmail(email))
 	return scanUser(row)
+}
+
+// CountByRole counts users holding the given role key.
+func (s *MySQLStore) CountByRole(roleKey string) (int, error) {
+	var n int
+	err := s.db.QueryRow("SELECT COUNT(*) FROM users WHERE role = ?", roleKey).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // List returns all users ordered by creation time.
@@ -310,7 +342,7 @@ func (s *MySQLStore) Update(u *User) error {
 }
 
 // Delete removes the user with the given ID.
-func (s *MySQLStore) Delete(id string) error {
+func (s *MySQLStore) Delete(id int64) error {
 	res, err := s.db.Exec("DELETE FROM users WHERE id = ?", id)
 	if err != nil {
 		return err

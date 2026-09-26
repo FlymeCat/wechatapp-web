@@ -20,9 +20,9 @@ var ErrTokenExpired = errors.New("token expired")
 // ErrTokenRevoked is returned when a token was invalidated by logout.
 var ErrTokenRevoked = errors.New("token revoked")
 
-// Claims is the JWT payload.
+// Claims is the JWT payload. UserID is the numeric account ID.
 type Claims struct {
-	UserID   string `json:"uid"`
+	UserID   int64  `json:"uid"`
 	Username string `json:"username"`
 	Role     string `json:"role"`
 	// Purpose is "access" (default, normal routes) or "mfa_challenge"
@@ -75,18 +75,18 @@ func NewManager(secret string, ttl time.Duration, issuer string) *Manager {
 }
 
 // Issue creates a signed access token for the user.
-func (m *Manager) Issue(userID, username, role string) (token string, expiresAt time.Time, err error) {
+func (m *Manager) Issue(userID int64, username, role string) (token string, expiresAt time.Time, err error) {
 	return m.IssuePurpose(userID, username, role, PurposeAccess, m.ttl)
 }
 
 // IssueMFAChallenge creates a short-lived token that may only be used to
 // complete the second factor at /auth/mfa/verify.
-func (m *Manager) IssueMFAChallenge(userID, username, role string) (token string, expiresAt time.Time, err error) {
+func (m *Manager) IssueMFAChallenge(userID int64, username, role string) (token string, expiresAt time.Time, err error) {
 	return m.IssuePurpose(userID, username, role, PurposeMFAChallenge, m.mfaChallengeTTL)
 }
 
 // IssuePurpose creates a signed token with an explicit purpose and lifetime.
-func (m *Manager) IssuePurpose(userID, username, role, purpose string, ttl time.Duration) (token string, expiresAt time.Time, err error) {
+func (m *Manager) IssuePurpose(userID int64, username, role, purpose string, ttl time.Duration) (token string, expiresAt time.Time, err error) {
 	now := m.now()
 	exp := now.Add(ttl)
 	claims := Claims{
@@ -98,7 +98,7 @@ func (m *Manager) IssuePurpose(userID, username, role, purpose string, ttl time.
 			Issuer:    m.issuer,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(exp),
-			ID:        fmt.Sprintf("%s-%d", userID, now.UnixNano()),
+			ID:        fmt.Sprintf("%d-%d", userID, now.UnixNano()),
 		},
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

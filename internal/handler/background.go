@@ -6,6 +6,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -125,6 +126,17 @@ func (h *BackgroundHandler) ReplaceBackground(c *gin.Context) {
 
 func writeError(c *gin.Context, status int, msg string) {
 	c.JSON(status, ErrorResponse{Error: msg})
+}
+
+// parseIDParam parses the :id path parameter as a positive int64. On failure it
+// writes a 400 response and returns ok=false so the caller can return early.
+func parseIDParam(c *gin.Context) (int64, bool) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(c, http.StatusBadRequest, "无效的 ID")
+		return 0, false
+	}
+	return id, true
 }
 
 func readUploadedFile(fh *multipart.FileHeader) ([]byte, error) {
